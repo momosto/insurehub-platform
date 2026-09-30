@@ -1,0 +1,20 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+.terraform.lock.hcl.bak
+
+# Secrets (only SOPS-encrypted files may be committed)
+*.tfvars
+!*.example.tfvars
+keys.txt
+*.age
+kubeconfig*
+.env
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
