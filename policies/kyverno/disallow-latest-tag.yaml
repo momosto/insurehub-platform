@@ -1,0 +1,36 @@
+# Images are pinned to a version or digest so a rollback is a git revert (PF-03).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow latest tag
+    policies.kyverno.io/severity: medium
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-image-tag
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [insurehub, integrations, claimguard, lendhub, insureassist, insurehub-ussd, data]
+      validate:
+        message: "An explicit image tag or digest is required."
+        pattern:
+          spec:
+            containers:
+              - image: "*:*"
+    - name: no-latest
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [insurehub, integrations, claimguard, lendhub, insureassist, insurehub-ussd, data]
+      validate:
+        message: "The ':latest' tag is not allowed; pin a version."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"

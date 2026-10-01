@@ -1,0 +1,26 @@
+# One AppProject for the demo: which repos may deploy, and where. Cluster-scoped kinds are limited to what the
+# platform needs (namespaces, issuers, policies, RBAC for the reset job).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: insurehub
+  namespace: argocd
+spec:
+  description: InsureHub Group demo environment
+  sourceRepos:
+    - https://github.com/momosto/*
+    - https://charts.jetstack.io
+    - https://kyverno.github.io/kyverno
+    - https://open-telemetry.github.io/opentelemetry-helm-charts
+  destinations:
+    - { server: https://kubernetes.default.svc, namespace: "*" }
+  clusterResourceWhitelist:
+    - { group: "", kind: Namespace }
+    - { group: cert-manager.io, kind: ClusterIssuer }
+    - { group: kyverno.io, kind: ClusterPolicy }
+    - { group: rbac.authorization.k8s.io, kind: ClusterRole }
+    - { group: rbac.authorization.k8s.io, kind: ClusterRoleBinding }
+    - { group: apiextensions.k8s.io, kind: CustomResourceDefinition }
+    - { group: admissionregistration.k8s.io, kind: ValidatingWebhookConfiguration }
+    - { group: admissionregistration.k8s.io, kind: MutatingWebhookConfiguration }
+  orphanedResources: { warn: true }

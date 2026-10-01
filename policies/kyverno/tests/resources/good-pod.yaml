@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Pod
+metadata: { name: good-pod, namespace: lendhub }
+spec:
+  securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+  containers:
+    - name: api
+      image: ghcr.io/momosto/lendhub-api:0.1.0
+      securityContext: { allowPrivilegeEscalation: false }
+      resources: { requests: { cpu: 50m, memory: 256Mi }, limits: { memory: 512Mi } }

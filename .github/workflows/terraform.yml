@@ -1,0 +1,81 @@
+# Terraform plan on every PR that touches terraform/, apply on main behind the "demo" environment's required reviewer.
+# Credentials are repository secrets; state lives in OCI Object Storage through the S3-compatible backend.
+name: terraform
+
+on:
+  pull_request:
+    paths: [terraform/**]
+  push:
+    branches: [main]
+    paths: [terraform/**]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: terraform-demo
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  # OCI provider API-key auth, read by the provider from OCI_<attribute> environment variables
+  OCI_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+  OCI_user_ocid: ${{ secrets.OCI_USER_OCID }}
+  OCI_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+  OCI_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+  TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+  TF_VAR_region: ${{ vars.OCI_REGION }}
+  TF_VAR_compartment_ocid: ${{ secrets.OCI_COMPARTMENT_OCID }}
+  TF_VAR_ssh_public_key: ${{ vars.SSH_PUBLIC_KEY }}
+  TF_VAR_admin_cidr: ${{ vars.ADMIN_CIDR }}
+  # S3-compatible state backend (OCI customer secret key)
+  AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_KEY }}
+  # Cloudflare
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  TF_VAR_account_id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+  TF_VAR_zone_id: ${{ vars.CLOUDFLARE_ZONE_ID }}
+  TF_VAR_domain: ${{ vars.DEMO_DOMAIN }}
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix: { stack: [oci, cloudflare] }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: 1.9.8 }
+      - run: terraform -chdir=terraform/${{ matrix.stack }} init -backend-config="endpoints={s3=\"${{ vars.TF_STATE_ENDPOINT }}\"}"
+      - id: plan
+        run: terraform -chdir=terraform/${{ matrix.stack }} plan -no-color -lock-timeout=5m -out=tfplan
+      - name: Comment the plan on the PR
+        uses: actions/github-script@v7
+        env:
+          PLAN: ${{ steps.plan.outputs.stdout }}
+        with:
+          script: |
+            const body = `#### terraform/${{ matrix.stack }} plan\n\`\`\`\n${process.env.PLAN.slice(-60000)}\n\`\`\``;
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+
+  apply:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    environment: demo            # required reviewer: nothing reaches the cloud without a human approving it
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: 1.9.8, terraform_wrapper: false }
+      - name: OCI (VM, network, bucket)
+        run: |
+          terraform -chdir=terraform/oci init -backend-config="endpoints={s3=\"${{ vars.TF_STATE_ENDPOINT }}\"}"
+          terraform -chdir=terraform/oci apply -auto-approve -lock-timeout=5m
+          echo "TF_VAR_node_public_ip=$(terraform -chdir=terraform/oci output -raw node_public_ip)" >> "$GITHUB_ENV"
+      - name: Cloudflare (DNS, Pages, TLS)
+        run: |
+          terraform -chdir=terraform/cloudflare init -backend-config="endpoints={s3=\"${{ vars.TF_STATE_ENDPOINT }}\"}"
+          terraform -chdir=terraform/cloudflare apply -auto-approve -lock-timeout=5m

@@ -1,0 +1,122 @@
+# Platform layer, in sync-wave order: guardrails (-3) → controllers (-3) → data, certs, ingress, policies (-2) → observability (-1).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-baseline
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-3" }
+spec:
+  project: insurehub
+  source: { repoURL: https://github.com/momosto/insurehub-platform, targetRevision: main, path: clusters/demo/platform }
+  destination: { server: https://kubernetes.default.svc }
+  syncPolicy: { automated: { prune: true, selfHeal: true } }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: secrets
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-3" }
+spec:
+  project: insurehub
+  # KSOPS decrypts the SOPS files with the age key mounted into the repo server (bootstrap/argocd)
+  source: { repoURL: https://github.com/momosto/insurehub-platform, targetRevision: main, path: secrets }
+  destination: { server: https://kubernetes.default.svc }
+  syncPolicy: { automated: { prune: false, selfHeal: true } }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-3" }
+spec:
+  project: insurehub
+  source:
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    targetRevision: v1.16.2
+    helm:
+      valuesObject:
+        crds: { enabled: true }
+        resources: { requests: { cpu: 10m, memory: 64Mi }, limits: { memory: 128Mi } }
+        webhook: { resources: { requests: { cpu: 10m, memory: 32Mi }, limits: { memory: 64Mi } } }
+        cainjector: { resources: { requests: { cpu: 10m, memory: 64Mi }, limits: { memory: 128Mi } } }
+  destination: { server: https://kubernetes.default.svc, namespace: cert-manager }
+  syncPolicy: { automated: { prune: true, selfHeal: true }, syncOptions: [CreateNamespace=true] }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-3" }
+spec:
+  project: insurehub
+  source:
+    repoURL: https://kyverno.github.io/kyverno
+    chart: kyverno
+    targetRevision: 3.3.4
+    helm:
+      valuesObject:
+        admissionController: { replicas: 1, container: { resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 256Mi } } } }
+        backgroundController: { enabled: true, resources: { requests: { cpu: 10m, memory: 64Mi }, limits: { memory: 128Mi } } }
+        cleanupController: { enabled: false }
+        reportsController: { enabled: true, resources: { requests: { cpu: 10m, memory: 64Mi }, limits: { memory: 128Mi } } }
+  destination: { server: https://kubernetes.default.svc, namespace: kyverno }
+  syncPolicy: { automated: { prune: true, selfHeal: true }, syncOptions: [CreateNamespace=true, ServerSideApply=true] }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno-policies
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-2" }
+spec:
+  project: insurehub
+  source: { repoURL: https://github.com/momosto/insurehub-platform, targetRevision: main, path: policies/kyverno }
+  destination: { server: https://kubernetes.default.svc }
+  syncPolicy: { automated: { prune: true, selfHeal: true } }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: data-services
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-2" }
+spec:
+  project: insurehub
+  source: { repoURL: https://github.com/momosto/insurehub-platform, targetRevision: main, path: clusters/demo/infra }
+  destination: { server: https://kubernetes.default.svc }
+  syncPolicy: { automated: { prune: false, selfHeal: true } }   # never auto-prune stateful data
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: certificates-and-ingress
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-2" }
+spec:
+  project: insurehub
+  sources:
+    - { repoURL: https://github.com/momosto/insurehub-platform, targetRevision: main, path: clusters/demo/certs }
+    - { repoURL: https://github.com/momosto/insurehub-platform, targetRevision: main, path: clusters/demo/ingress }
+  destination: { server: https://kubernetes.default.svc }
+  syncPolicy: { automated: { prune: true, selfHeal: true } }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: otel-collector
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "-1" }
+spec:
+  project: insurehub
+  sources:
+    - repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+      chart: opentelemetry-collector
+      targetRevision: 0.111.2
+      helm: { valueFiles: [$platform/clusters/demo/observability/otel-collector-values.yaml] }
+    - { repoURL: https://github.com/momosto/insurehub-platform, targetRevision: main, ref: platform }
+  destination: { server: https://kubernetes.default.svc, namespace: observability }
+  syncPolicy: { automated: { prune: true, selfHeal: true } }

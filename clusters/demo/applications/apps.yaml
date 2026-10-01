@@ -1,0 +1,96 @@
+# Business systems (sync wave 0). Each points at the app repo's deploy/ folder; the image tag lives HERE, so the
+# environment is reproducible from this repo alone and a rollback is a revert of one line (PF-03).
+# The tag bump bot (.github/workflows/bump-image.yml) edits the `newTag` values.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: lendhub
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "0" }
+spec:
+  project: insurehub
+  source:
+    repoURL: https://github.com/momosto/lendhub
+    targetRevision: main
+    path: deploy/overlays/demo
+    kustomize:
+      images:
+        - ghcr.io/momosto/lendhub-api:0.1.0
+        - ghcr.io/momosto/lendhub-web:0.1.0
+  destination: { server: https://kubernetes.default.svc, namespace: lendhub }
+  syncPolicy: { automated: { prune: true, selfHeal: true } }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: insureassist
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "0" }
+spec:
+  project: insurehub
+  source:
+    repoURL: https://github.com/momosto/insureassist
+    targetRevision: main
+    path: deploy/base
+    kustomize:
+      images: [ghcr.io/momosto/insureassist:0.1.0]
+  destination: { server: https://kubernetes.default.svc, namespace: insureassist }
+  syncPolicy: { automated: { prune: true, selfHeal: true } }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: insurehub-ussd
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "0" }
+spec:
+  project: insurehub
+  source:
+    repoURL: https://github.com/momosto/insurehub-ussd
+    targetRevision: main
+    path: deploy/base
+    kustomize:
+      images: [ghcr.io/momosto/insurehub-ussd:0.1.0]
+  destination: { server: https://kubernetes.default.svc, namespace: insurehub-ussd }
+  syncPolicy: { automated: { prune: true, selfHeal: true } }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: integrations
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "0" }
+spec:
+  project: insurehub
+  source:
+    repoURL: https://github.com/momosto/insurehub-integrations
+    targetRevision: main
+    path: deploy/k8s
+  destination: { server: https://kubernetes.default.svc, namespace: integrations }
+  syncPolicy: { automated: { prune: true, selfHeal: true } }
+---
+# InsureHub and ClaimGuard get their deploy/ folders in their own deploy-week work (see each NEXT_STEPS.md).
+# Until then these Applications show as "missing path" in ArgoCD, which is the intended reminder.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: insurehub
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "0" }
+spec:
+  project: insurehub
+  source: { repoURL: https://github.com/momosto/insurehub, targetRevision: main, path: deploy/base }
+  destination: { server: https://kubernetes.default.svc, namespace: insurehub }
+  syncPolicy: { automated: { prune: true, selfHeal: true } }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: claimguard
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "0" }
+spec:
+  project: insurehub
+  source: { repoURL: https://github.com/momosto/claimguard, targetRevision: main, path: deploy/base }
+  destination: { server: https://kubernetes.default.svc, namespace: claimguard }
+  syncPolicy: { automated: { prune: true, selfHeal: true } }

@@ -1,6 +1,6 @@
 # InsureHub Platform — GitOps, observability & DevSecOps for the InsureHub Group ecosystem
 
-**Status:** 📝 Planned — Phase 1 starts 2026-10-01
+**Status:** 🟡 v0.1.0 built and validated: every check in `scripts/validate.sh` passes, and the data layer, Kyverno policies and the USSD gateway were deployed to a local k3s cluster ([evidence](docs/evidence/2026-10-01-local-cluster.md)). The OCI VM is not provisioned yet (needs the cloud account).
 **Stack:** Terraform (OCI provider) · cloud-init · k3s · Traefik · cert-manager · ArgoCD (app-of-apps) · Helm/Kustomize · SOPS + age · OpenTelemetry Collector · Grafana Cloud (Prometheus/Loki/Tempo) · Trivy · gitleaks · CodeQL · Syft (SBOM) · cosign · Kyverno · Keycloak (phase 3) · GitHub Actions
 
 **Author:** Simbarashe Nyamusa, Senior Software Engineer
@@ -29,29 +29,44 @@ It proves the DevOps and governance lines on my CV with something a reviewer can
 | [docs/06-delivery-plan.md](docs/06-delivery-plan.md) | phases, backlog, definition of done |
 | [docs/runbooks/](docs/runbooks/) | operational runbooks |
 | [docs/templates/](docs/templates/) | ADR, concept paper, change request, runbook, postmortem templates |
-| [docs/adr/](docs/adr/) | platform decisions |
+| [docs/adr/](docs/adr/) | platform decisions (ADR-0006: what changed while building) |
+| [docs/07-traceability.md](docs/07-traceability.md) | every requirement → implementation → evidence, and what is left |
+| [docs/09-test-cases.md](docs/09-test-cases.md) | every test case (offline, local cluster, cloud drills) with its last result |
+| [docs/evidence/](docs/evidence/) | validation runs and drills |
 
-## Planned repo layout
+## Repo layout
 
 ```
 insurehub-platform/
 ├── terraform/
-│   ├── oci/                 VCN, subnet, security list, A1 instance, block volume, object storage bucket
-│   └── cloudflare/          DNS records, Pages projects
+│   ├── oci/                  VCN, subnet, security list (SSH from admin CIDR only), A1 VM, backup bucket + lifecycle
+│   └── cloudflare/           proxied DNS per app, Pages projects for the SPAs, TLS settings
 ├── bootstrap/
-│   ├── cloud-init.yaml      OS hardening, k3s install
-│   └── argocd/              ArgoCD install + root "app-of-apps"
+│   ├── cloud-init.yaml       OS hardening, k3s with secrets encryption + audit log
+│   └── argocd/               ArgoCD core install + KSOPS, root app-of-apps
 ├── clusters/demo/
-│   ├── apps/                one ArgoCD Application per system (points at each repo's chart/kustomize)
-│   ├── infra/               cert-manager, postgres, rabbitmq, redis, keycloak
-│   └── observability/       otel-collector, prometheus, loki, tempo, grafana (+ dashboards as JSON)
-├── policies/kyverno/        require limits, disallow :latest, require signed images
-├── secrets/                 SOPS-encrypted secrets (age)
-├── .github/
-│   ├── workflows/           terraform plan/apply, policy checks
-│   └── reusable/            shared build-scan-sign-push workflow used by every app repo
-└── docs/
+│   ├── platform/             namespaces (PSA levels), default-deny NetworkPolicies, quotas + LimitRanges
+│   ├── ingress/ certs/       Traefik middlewares (headers, rate limit), Let's Encrypt issuers
+│   ├── infra/                Postgres (DB per system), RabbitMQ, Redis, nightly backup, demo reset
+│   ├── applications/         AppProject + Applications in sync waves; app image tags pinned here
+│   └── observability/        OTel Collector values (PII redaction, tail sampling → Grafana Cloud)
+├── policies/kyverno/         limits, no :latest, non-root, keyless signature verification + CLI tests
+├── slo/                      recording rules, burn-rate alerts, promtool unit tests
+├── dashboards/               golden signals, business flows (Grafana JSON)
+├── secrets/                  SOPS rules, examples (no real values), KSOPS generator
+├── scripts/                  validate, bootstrap-cluster, local-cluster (k3d), rebuild-drill
+└── .github/workflows/        validate, terraform plan/apply, build-scan-sign (reusable), bump-image
 ```
+
+## Try it
+
+```bash
+scripts/validate.sh              # all offline checks (needs terraform, kustomize, kubeconform, kyverno, promtool, jq)
+scripts/local-cluster.sh up      # k3s in Docker with the platform baseline and data services
+scripts/local-cluster.sh down
+```
+
+Going live: [docs/07-traceability.md §4](docs/07-traceability.md#4-next).
 
 ## Phases
 

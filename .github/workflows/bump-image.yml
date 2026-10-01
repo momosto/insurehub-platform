@@ -1,0 +1,61 @@
+# Receives "image-published" from build-scan-sign.yml (or a manual run) and changes ONE tag in
+# clusters/demo/applications/apps.yaml. ArgoCD syncs the commit; rolling back is `git revert` of it (PF-01, PF-03).
+name: bump-image
+
+on:
+  repository_dispatch:
+    types: [image-published]
+  workflow_dispatch:
+    inputs:
+      app: { description: "ArgoCD Application, e.g. lendhub", required: true }
+      image: { description: "e.g. ghcr.io/momosto/lendhub-api", required: true }
+      tag: { description: "e.g. 0.1.1 or sha-1a2b3c4", required: true }
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump-image
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    env:
+      APP: ${{ github.event.client_payload.app || inputs.app }}
+      IMAGE: ${{ github.event.client_payload.image || inputs.image }}
+      TAG: ${{ github.event.client_payload.tag || inputs.tag }}
+      SOURCE: ${{ github.event.client_payload.source || 'manual run' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate input
+        run: |
+          [[ "$APP" =~ ^[a-z0-9-]+$ ]] || { echo "bad app"; exit 1; }
+          [[ "$IMAGE" =~ ^ghcr\.io/${{ github.repository_owner }}/[a-z0-9-]+$ ]] || { echo "image must be in this owner's GHCR"; exit 1; }
+          [[ "$TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+|sha-[0-9a-f]{7,})$ ]] || { echo "tag must be semver or sha-<hex>"; exit 1; }
+
+      - name: Change the tag for this app only
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          path = "clusters/demo/applications/apps.yaml"
+          app, image, tag = os.environ["APP"], os.environ["IMAGE"], os.environ["TAG"]
+          docs = open(path).read().split("\n---\n")
+          hits = 0
+          for i, doc in enumerate(docs):
+              if re.search(rf"^  name: {re.escape(app)}$", doc, re.M):
+                  new, n = re.subn(rf"{re.escape(image)}:[\w.\-]+", f"{image}:{tag}", doc)
+                  docs[i], hits = new, hits + n
+          if hits == 0:
+              sys.exit(f"{image} not found in the {app} Application")
+          open(path, "w").write("\n---\n".join(docs))
+          PY
+          git diff --stat
+
+      - name: Commit
+        run: |
+          git config user.name "insurehub-bot"
+          git config user.email "insurehub-bot@users.noreply.github.com"
+          git commit -am "Deploy $APP: ${IMAGE##*/}:$TAG" -m "Source: $SOURCE" || echo "Already at $TAG"
+          git push

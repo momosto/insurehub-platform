@@ -1,0 +1,24 @@
+# Let's Encrypt via HTTP-01 through Traefik (Cloudflare proxies with Full (strict) TLS in front)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ops@insurehub.example.org
+    privateKeySecretRef: { name: letsencrypt-account-key }
+    solvers:
+      - http01: { ingress: { ingressClassName: traefik } }
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: ops@insurehub.example.org
+    privateKeySecretRef: { name: letsencrypt-staging-account-key }
+    solvers:
+      - http01: { ingress: { ingressClassName: traefik } }

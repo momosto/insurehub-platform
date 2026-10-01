@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: argocd-cm }
+data:
+  # KSOPS is a kustomize exec plugin; alpha plugins must be enabled for kustomize builds
+  kustomize.buildOptions: --enable-alpha-plugins --enable-exec
+  timeout.reconciliation: 120s

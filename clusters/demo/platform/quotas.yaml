@@ -1,0 +1,68 @@
+# Default container limits and per-namespace quotas sized from the 12 GB resource budget (docs/free-hosting-plan.md §3).
+# kustomize namespace transforms are not used here so each quota stays readable next to its budget line.
+---
+apiVersion: v1
+kind: LimitRange
+metadata: { name: defaults, namespace: lendhub }
+spec:
+  limits: [{ type: Container, default: { memory: 512Mi }, defaultRequest: { cpu: 50m, memory: 256Mi } }]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: { name: budget, namespace: lendhub }
+spec: { hard: { requests.memory: 1200Mi, limits.memory: 1600Mi, pods: "10" } }
+---
+apiVersion: v1
+kind: LimitRange
+metadata: { name: defaults, namespace: insureassist }
+spec:
+  limits: [{ type: Container, default: { memory: 384Mi }, defaultRequest: { cpu: 25m, memory: 128Mi } }]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: { name: budget, namespace: insureassist }
+spec: { hard: { requests.memory: 700Mi, limits.memory: 1400Mi, pods: "6" } }   # agent + MCP, both surging at once
+---
+apiVersion: v1
+kind: LimitRange
+metadata: { name: defaults, namespace: insurehub-ussd }
+spec:
+  limits: [{ type: Container, default: { memory: 192Mi }, defaultRequest: { cpu: 25m, memory: 96Mi } }]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: { name: budget, namespace: insurehub-ussd }
+spec: { hard: { requests.memory: 320Mi, limits.memory: 640Mi, pods: "6" } }   # 2 replicas + 1 surge pod during a rollout
+---
+apiVersion: v1
+kind: LimitRange
+metadata: { name: defaults, namespace: insurehub }
+spec:
+  limits: [{ type: Container, default: { memory: 384Mi }, defaultRequest: { cpu: 50m, memory: 256Mi } }]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: { name: budget, namespace: insurehub }
+spec: { hard: { requests.memory: 600Mi, limits.memory: 1Gi, pods: "6" } }
+---
+apiVersion: v1
+kind: LimitRange
+metadata: { name: defaults, namespace: integrations }
+spec:
+  limits: [{ type: Container, default: { memory: 384Mi }, defaultRequest: { cpu: 50m, memory: 192Mi } }]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: { name: budget, namespace: integrations }
+spec: { hard: { requests.memory: 700Mi, limits.memory: 1Gi, pods: "8" } }
+---
+apiVersion: v1
+kind: LimitRange
+metadata: { name: defaults, namespace: claimguard }
+spec:
+  limits: [{ type: Container, default: { memory: 768Mi }, defaultRequest: { cpu: 50m, memory: 384Mi } }]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: { name: budget, namespace: claimguard }
+spec: { hard: { requests.memory: 700Mi, limits.memory: 1Gi, pods: "4" } }

@@ -1,0 +1,71 @@
+# OpenTelemetry Collector (deployment mode) → Grafana Cloud free (Prometheus/Loki/Tempo-compatible OTLP gateway).
+# Redaction happens here, before anything leaves the cluster (docs/03 §4): msisdn, national IDs, message bodies.
+mode: deployment
+replicaCount: 1
+image:
+  repository: otel/opentelemetry-collector-contrib
+resources:
+  requests: { cpu: 25m, memory: 128Mi }
+  limits: { memory: 256Mi }
+extraEnvsFrom:
+  - secretRef: { name: grafana-cloud-otlp }   # GRAFANA_OTLP_ENDPOINT, GRAFANA_OTLP_AUTH (base64 "instanceId:token")
+ports:
+  otlp: { enabled: true }
+  otlp-http: { enabled: true }
+  jaeger-compact: { enabled: false }
+  jaeger-thrift: { enabled: false }
+  jaeger-grpc: { enabled: false }
+  zipkin: { enabled: false }
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc: { endpoint: "0.0.0.0:4317" }
+        http: { endpoint: "0.0.0.0:4318" }
+  processors:
+    memory_limiter: { check_interval: 5s, limit_percentage: 80, spike_limit_percentage: 20 }
+    batch: { send_batch_size: 512, timeout: 5s }
+    k8sattributes: {}
+    # PII never leaves the cluster
+    attributes/redact:
+      actions:
+        - { key: msisdn, action: delete }
+        - { key: phoneNumber, action: delete }
+        - { key: nationalId, action: delete }
+        - { key: national_id, action: delete }
+        - { key: customer.msisdn, action: delete }
+        - { key: messaging.message.body, action: delete }
+        - { key: http.request.body, action: delete }
+        - { key: ussd.text, action: delete }
+    transform/redact-logs:
+      log_statements:
+        - context: log
+          statements:
+            - replace_pattern(body, "\\b2637[1378]\\d{7}\\b", "2637*******")
+            - replace_pattern(body, "\\b\\d{2}-?\\d{6,7}-?[A-Z]-?\\d{2}\\b", "[national-id]")
+    # keep every error and slow trace, sample the rest (stays inside the free tier's trace volume)
+    tail_sampling:
+      decision_wait: 10s
+      policies:
+        - { name: errors, type: status_code, status_code: { status_codes: [ERROR] } }
+        - { name: slow, type: latency, latency: { threshold_ms: 1000 } }
+        - { name: sample, type: probabilistic, probabilistic: { sampling_percentage: 20 } }
+  exporters:
+    otlphttp/grafana:
+      endpoint: ${env:GRAFANA_OTLP_ENDPOINT}
+      headers: { Authorization: "Basic ${env:GRAFANA_OTLP_AUTH}" }
+    debug: { verbosity: basic }
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, k8sattributes, attributes/redact, tail_sampling, batch]
+        exporters: [otlphttp/grafana]
+      metrics:
+        receivers: [otlp]
+        processors: [memory_limiter, k8sattributes, attributes/redact, batch]
+        exporters: [otlphttp/grafana]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, k8sattributes, attributes/redact, transform/redact-logs, batch]
+        exporters: [otlphttp/grafana]

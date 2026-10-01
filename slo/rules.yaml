@@ -1,0 +1,95 @@
+# SLO recording rules and multi-window burn-rate alerts (docs/05-slos-and-alerting.md).
+# Loaded into Grafana Cloud (Mimir ruler) with mimirtool; checked by promtool in CI (.github/workflows/validate.yml).
+# Metric names follow OpenTelemetry semantic conventions as exported to Prometheus.
+# 30-day SLO 99% -> error budget 1%. Fast burn: 14.4x over 1 h and 5 m. Slow burn: 6x over 6 h and 30 m.
+groups:
+  - name: slo-availability-recording
+    interval: 1m
+    rules:
+      - record: slo:http_errors:ratio_rate5m
+        expr: |
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m]))
+          /
+          sum by (service_name) (rate(http_server_request_duration_seconds_count[5m]))
+      - record: slo:http_errors:ratio_rate30m
+        expr: |
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[30m]))
+          /
+          sum by (service_name) (rate(http_server_request_duration_seconds_count[30m]))
+      - record: slo:http_errors:ratio_rate1h
+        expr: |
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[1h]))
+          /
+          sum by (service_name) (rate(http_server_request_duration_seconds_count[1h]))
+      - record: slo:http_errors:ratio_rate6h
+        expr: |
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[6h]))
+          /
+          sum by (service_name) (rate(http_server_request_duration_seconds_count[6h]))
+
+  - name: slo-availability-alerts
+    rules:
+      - alert: SLOErrorBudgetFastBurn
+        expr: |
+          slo:http_errors:ratio_rate1h > (14.4 * 0.01) and slo:http_errors:ratio_rate5m > (14.4 * 0.01)
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "{{ $labels.service_name }} is burning its 30-day error budget 14x too fast"
+          runbook: https://github.com/momosto/insurehub-platform/blob/main/docs/runbooks/README.md
+      - alert: SLOErrorBudgetSlowBurn
+        expr: |
+          slo:http_errors:ratio_rate6h > (6 * 0.01) and slo:http_errors:ratio_rate30m > (6 * 0.01)
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $labels.service_name }} error budget burning 6x too fast"
+
+  - name: slo-latency
+    rules:
+      # USSD: aggregators drop sessions after ~2 s, so 99% of requests must finish within 2 s
+      - alert: UssdLatencySLOBreached
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(ussd_request_duration_milliseconds_bucket[30m]))) > 2000
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "USSD p99 above 2 s; aggregators will drop sessions" }
+      - alert: InsureHubPolicyLatency
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name="insurehub-api", http_route=~"/api/policies.*"}[30m]))) > 0.5
+        for: 15m
+        labels: { severity: ticket }
+        annotations: { summary: "InsureHub /api/policies p95 above 500 ms" }
+
+  - name: operations
+    rules:
+      - alert: DeadLetterQueueNotEmpty
+        expr: max by (queue) (rabbitmq_queue_messages{queue=~".*\\.dlq"}) > 0
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "Messages in {{ $labels.queue }}", runbook: docs/runbooks/dead-letter-queue.md }
+      # Spring Batch timer from LendHub (Micrometer): no completed EOD in 26 h means the business date is stuck
+      - alert: LendHubEodNotCompleted
+        expr: |
+          increase(spring_batch_job_seconds_count{spring_batch_job_name="eodJob", spring_batch_job_status="COMPLETED"}[26h]) == 0
+        labels: { severity: ticket }
+        annotations: { summary: "LendHub end-of-day has not completed for 26 h", runbook: https://github.com/momosto/lendhub/blob/main/docs/08-operations.md }
+      # kube-state-metrics (Grafana Kubernetes Monitoring); RPO is 24 h
+      - alert: BackupMissing
+        expr: time() - kube_cronjob_status_last_successful_time{namespace="data", cronjob="postgres-backup"} > 26 * 3600
+        labels: { severity: ticket }
+        annotations: { summary: "No successful database backup in 26 h", runbook: docs/runbooks/backup-restore.md }
+      - alert: CertificateExpiresSoon
+        expr: certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 24 * 3600
+        labels: { severity: ticket }
+        annotations: { summary: "Certificate {{ $labels.name }} expires in under 14 days", runbook: docs/runbooks/certificates.md }
+      - alert: NodeDiskAlmostFull
+        expr: (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.8
+        for: 15m
+        labels: { severity: ticket }
+        annotations: { summary: "Node disk above 80%", runbook: docs/runbooks/disk-full.md }
+      - alert: UssdBackendFallbacks
+        expr: sum(rate(ussd_backend_fallbacks_total[10m])) > 0.1
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "USSD is answering from cache or 'we will SMS you': a core API is slow or down" }

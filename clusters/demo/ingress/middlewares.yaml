@@ -1,0 +1,28 @@
+# Applied to every public Ingress via annotation traefik.ingress.kubernetes.io/router.middlewares:
+#   platform-security-headers@kubernetescrd, platform-rate-limit@kubernetescrd
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels: { insurehub/tier: infra }
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: { name: security-headers, namespace: platform }
+spec:
+  headers:
+    stsSeconds: 31536000
+    stsIncludeSubdomains: true
+    contentTypeNosniff: true
+    frameDeny: true
+    referrerPolicy: strict-origin-when-cross-origin
+    permissionsPolicy: "camera=(), microphone=(), geolocation=()"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: { name: rate-limit, namespace: platform }
+spec:
+  rateLimit:
+    average: 20     # requests per second per client IP (demo protection against abuse and AI-cost spikes)
+    burst: 40
+    sourceCriterion: { ipStrategy: { depth: 1 } }   # Cloudflare in front: use the client IP from X-Forwarded-For

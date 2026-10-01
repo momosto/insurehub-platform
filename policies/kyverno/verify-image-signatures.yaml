@@ -1,0 +1,31 @@
+# Only images built and signed by the portfolio's own GitHub Actions (keyless cosign, Sigstore) are admitted (PF-06).
+# The certificate identity pins the reusable workflow in this repo, so an image signed by any other workflow fails.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signatures
+  annotations:
+    policies.kyverno.io/title: Verify cosign keyless signatures
+    policies.kyverno.io/severity: high
+spec:
+  validationFailureAction: Enforce
+  webhookTimeoutSeconds: 15
+  background: false
+  rules:
+    - name: signed-by-portfolio-ci
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [insurehub, integrations, claimguard, lendhub, insureassist, insurehub-ussd]
+      verifyImages:
+        - imageReferences: ["ghcr.io/momosto/*"]
+          mutateDigest: true
+          verifyDigest: true
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: https://token.actions.githubusercontent.com
+                    subjectRegExp: '^https://github\.com/momosto/insurehub-platform/\.github/workflows/build-scan-sign\.yml@refs/(heads/main|tags/v.*)$'
+                    rekor: { url: https://rekor.sigstore.dev }

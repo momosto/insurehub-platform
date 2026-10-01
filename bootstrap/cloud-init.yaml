@@ -1,0 +1,75 @@
+#cloud-config
+# Node bootstrap: OS hardening + k3s. Rendered by terraform/oci with templatefile().
+users:
+  - name: ${admin_user}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+package_update: true
+package_upgrade: true
+packages: [unattended-upgrades, fail2ban, ufw, jq, curl, auditd]
+
+write_files:
+  # SSH: keys only, no root, no passwords (docs/04 host hardening)
+  - path: /etc/ssh/sshd_config.d/10-hardening.conf
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      X11Forwarding no
+      AllowUsers ${admin_user}
+      MaxAuthTries 3
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  - path: /etc/sysctl.d/90-k8s.conf
+    content: |
+      net.ipv4.ip_forward = 1
+      vm.max_map_count = 262144
+      kernel.panic = 10
+  # k3s: secrets encrypted at rest, audit log on. Port 6443 is closed in the OCI security list and ufw, so the API
+  # is only reachable through an SSH tunnel (pods still reach it in-cluster).
+  - path: /etc/rancher/k3s/config.yaml
+    content: |
+      write-kubeconfig-mode: "0600"
+      tls-san: ["${cluster_hostname}"]
+      secrets-encryption: true
+      disable: [servicelb]
+      kube-apiserver-arg:
+        - "audit-log-path=/var/log/k3s-audit.log"
+        - "audit-log-maxage=7"
+        - "audit-policy-file=/etc/rancher/k3s/audit-policy.yaml"
+      kubelet-arg:
+        - "eviction-hard=memory.available<300Mi,nodefs.available<10%"
+        - "system-reserved=memory=500Mi"
+  - path: /etc/rancher/k3s/audit-policy.yaml
+    content: |
+      apiVersion: audit.k8s.io/v1
+      kind: Policy
+      rules:
+        - level: Metadata
+          resources: [{ group: "", resources: ["secrets", "configmaps"] }]
+        - level: RequestResponse
+          verbs: ["create", "update", "patch", "delete"]
+          resources: [{ group: "apps" }, { group: "argoproj.io" }, { group: "rbac.authorization.k8s.io" }]
+        - level: None
+
+runcmd:
+  # Oracle Ubuntu images ship iptables rules that block 80/443; let ufw own the firewall
+  - iptables -F INPUT && netfilter-persistent save || true
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw allow in on cni0
+  - ufw --force enable
+  - systemctl enable --now fail2ban auditd
+  - sysctl --system
+  - systemctl restart ssh
+  - curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${k3s_version}" sh -s - server
+  - mkdir -p /home/${admin_user}/.kube && cp /etc/rancher/k3s/k3s.yaml /home/${admin_user}/.kube/config && chown -R ${admin_user}: /home/${admin_user}/.kube

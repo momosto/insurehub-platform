@@ -1,0 +1,48 @@
+# One namespace per system (data ownership, principle P1) plus shared infra. Pod Security "restricted" for apps.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data
+  labels: { insurehub/tier: infra, pod-security.kubernetes.io/enforce: baseline }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels: { insurehub/tier: infra, pod-security.kubernetes.io/enforce: baseline }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: insurehub
+  labels: { insurehub/tier: app, pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: integrations
+  labels: { insurehub/tier: app, pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: claimguard
+  labels: { insurehub/tier: app, pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lendhub
+  labels: { insurehub/tier: app, pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: insureassist
+  labels: { insurehub/tier: app, pod-security.kubernetes.io/enforce: restricted }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: insurehub-ussd
+  labels: { insurehub/tier: app, pod-security.kubernetes.io/enforce: restricted }

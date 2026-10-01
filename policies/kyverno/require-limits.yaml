@@ -1,0 +1,27 @@
+# Every container in an app namespace declares a memory limit and CPU/memory requests. On a 24 GB single node one
+# unbounded pod can starve the whole demo (docs/03-architecture.md, resource budget).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-requests-limits
+  annotations:
+    policies.kyverno.io/title: Require requests and memory limits
+    policies.kyverno.io/severity: medium
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: containers-have-resources
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [insurehub, integrations, claimguard, lendhub, insureassist, insurehub-ussd, data]
+      validate:
+        message: "Every container needs resources.requests.cpu, resources.requests.memory and resources.limits.memory."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests: { cpu: "?*", memory: "?*" }
+                  limits: { memory: "?*" }

@@ -1,0 +1,135 @@
+# Reusable pipeline every app repo calls (PF-02, PF-06): multi-arch build -> GHCR -> Trivy gate -> SBOM ->
+# keyless cosign signature + SBOM attestation -> ask this repo to bump the tag (PF-01).
+# Reusable workflows must live in .github/workflows, so this is here rather than in .github/reusable (ADR-0006).
+#
+# Caller (about 10 lines, in each app repo's .github/workflows/release.yml):
+#   on: { push: { branches: [main] } }
+#   permissions: { contents: read, packages: write, id-token: write, security-events: write }
+#   jobs:
+#     image:
+#       uses: momosto/insurehub-platform/.github/workflows/build-scan-sign.yml@main
+#       with: { image: lendhub-api, context: ., dockerfile: api/Dockerfile, app: lendhub }
+#       secrets: { platform-token: ${{ secrets.PLATFORM_DISPATCH_TOKEN }} }
+#
+# Kyverno (policies/kyverno/verify-image-signatures.yaml) only admits images whose Sigstore certificate names
+# THIS workflow file as the signer, so an image built any other way is rejected at admission.
+name: build-scan-sign
+
+on:
+  workflow_call:
+    inputs:
+      image: { type: string, required: true, description: "image name under ghcr.io/<owner>/" }
+      context: { type: string, default: "." }
+      dockerfile: { type: string, default: Dockerfile }
+      platforms: { type: string, default: "linux/amd64,linux/arm64" }
+      app: { type: string, default: "", description: "ArgoCD Application to bump; empty = no bump" }
+      trivy-severity: { type: string, default: "CRITICAL,HIGH" }
+    secrets:
+      platform-token:
+        required: false
+        description: fine-grained token with contents:write on insurehub-platform (repository_dispatch)
+    outputs:
+      digest: { value: "${{ jobs.build.outputs.digest }}" }
+      tag: { value: "${{ jobs.build.outputs.tag }}" }
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write          # keyless signing with the GitHub OIDC token
+  security-events: write   # Trivy SARIF to code scanning
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      tag: ${{ steps.meta.outputs.version }}
+    env:
+      REF: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+          # 0.1.0 on a v0.1.0 tag, otherwise sha-<short>; never "latest" (Kyverno rejects it)
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,format=short,prefix=sha-
+          flavor: latest=false
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.context }}/${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          cache-from: type=gha,scope=${{ inputs.image }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}
+
+      - name: Trivy scan (gate)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REF }}@${{ steps.push.outputs.digest }}
+          severity: ${{ inputs.trivy-severity }}
+          ignore-unfixed: true
+          exit-code: "1"
+          format: sarif
+          output: trivy.sarif
+      - if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with: { sarif_file: trivy.sarif, category: "trivy-${{ inputs.image }}" }
+
+      - name: SBOM (Syft, SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REF }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign and attest (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          cosign sign --yes "$REF@$DIGEST"
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "$REF@$DIGEST"
+
+      - uses: actions/upload-artifact@v4
+        with: { name: "sbom-${{ inputs.image }}", path: sbom.spdx.json }
+
+      - name: Summary
+        run: |
+          {
+            echo "### ${{ inputs.image }}"
+            echo "- image: \`$REF:${{ steps.meta.outputs.version }}\`"
+            echo "- digest: \`${{ steps.push.outputs.digest }}\`"
+            echo "- Trivy: no unfixed ${{ inputs.trivy-severity }} findings; SBOM attached and attested; signed keyless"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  bump:
+    needs: build
+    if: inputs.app != '' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Ask insurehub-platform to deploy the new tag
+        env:
+          GH_TOKEN: ${{ secrets.platform-token }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "No platform-token secret: skipping the bump (deploy by hand)"; exit 0; fi
+          gh api repos/${{ github.repository_owner }}/insurehub-platform/dispatches \
+            -f event_type=image-published \
+            -F "client_payload[app]=${{ inputs.app }}" \
+            -F "client_payload[image]=ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}" \
+            -F "client_payload[tag]=${{ needs.build.outputs.tag }}" \
+            -F "client_payload[source]=${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"

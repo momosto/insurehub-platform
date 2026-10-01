@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Pod
+metadata: { name: no-limits, namespace: lendhub }
+spec:
+  securityContext: { runAsNonRoot: true }
+  containers:
+    - name: api
+      image: ghcr.io/momosto/lendhub-api:0.1.0
+      securityContext: {}
+      resources: { requests: { cpu: 50m } }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: untagged, namespace: lendhub }
+spec:
+  securityContext: { runAsNonRoot: true }
+  containers:
+    - name: api
+      image: ghcr.io/momosto/lendhub-api
+      securityContext: {}
+      resources: { requests: { cpu: 50m, memory: 256Mi }, limits: { memory: 512Mi } }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: latest-tag, namespace: lendhub }
+spec:
+  securityContext: { runAsNonRoot: true }
+  containers:
+    - name: api
+      image: ghcr.io/momosto/lendhub-api:latest
+      securityContext: {}
+      resources: { requests: { cpu: 50m, memory: 256Mi }, limits: { memory: 512Mi } }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: root-pod, namespace: lendhub }
+spec:
+  securityContext: {}
+  containers:
+    - name: api
+      image: ghcr.io/momosto/lendhub-api:0.1.0
+      securityContext: { runAsUser: 0 }
+      resources: { requests: { cpu: 50m, memory: 256Mi }, limits: { memory: 512Mi } }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: privileged, namespace: lendhub }
+spec:
+  securityContext: { runAsNonRoot: true }
+  containers:
+    - name: api
+      image: ghcr.io/momosto/lendhub-api:0.1.0
+      securityContext: { privileged: true }
+      resources: { requests: { cpu: 50m, memory: 256Mi }, limits: { memory: 512Mi } }

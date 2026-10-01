@@ -1,0 +1,9 @@
+# ArgoCD "core" install (no Dex, no notifications: fits the 12 GB budget) + KSOPS for SOPS-encrypted secrets.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.3/manifests/core-install.yaml
+patches:
+  - path: repo-server-ksops.yaml
+  - path: argocd-cm.yaml

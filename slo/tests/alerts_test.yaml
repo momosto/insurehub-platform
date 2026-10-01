@@ -1,0 +1,91 @@
+# promtool test rules slo/tests/*.yaml (run by scripts/validate.sh). Proves the burn-rate maths and the
+# operational alerts fire when they should and stay quiet when they should not (PF-04).
+rule_files:
+  - ../rules.yaml
+evaluation_interval: 1m
+
+tests:
+  # 20% of requests fail for 2 hours: 20x the 1% budget, so the fast-burn page fires; a healthy service does not.
+  - interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="lendhub-api", http_response_status_code="200"}'
+        values: '0+80x120'
+      - series: 'http_server_request_duration_seconds_count{service_name="lendhub-api", http_response_status_code="500"}'
+        values: '0+20x120'
+      - series: 'http_server_request_duration_seconds_count{service_name="insureassist", http_response_status_code="200"}'
+        values: '0+100x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: SLOErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels: { severity: page, service_name: lendhub-api }
+            exp_annotations:
+              summary: "lendhub-api is burning its 30-day error budget 14x too fast"
+              runbook: https://github.com/momosto/insurehub-platform/blob/main/docs/runbooks/README.md
+    promql_expr_test:
+      - expr: round(slo:http_errors:ratio_rate5m{service_name="lendhub-api"}, 0.001)
+        eval_time: 60m
+        exp_samples:
+          - labels: '{service_name="lendhub-api"}'
+            value: 0.2
+
+  # 7% errors: above the 6x slow-burn line, below the 14.4x fast-burn line -> ticket only, no page.
+  - interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{service_name="insurehub-ussd", http_response_status_code="200"}'
+        values: '0+93x420'
+      - series: 'http_server_request_duration_seconds_count{service_name="insurehub-ussd", http_response_status_code="503"}'
+        values: '0+7x420'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: SLOErrorBudgetSlowBurn
+        exp_alerts:
+          - exp_labels: { severity: ticket, service_name: insurehub-ussd }
+            exp_annotations:
+              summary: "insurehub-ussd error budget burning 6x too fast"
+      - eval_time: 7h
+        alertname: SLOErrorBudgetFastBurn
+        exp_alerts: []
+
+  # A message sits in a dead-letter queue for more than 10 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'rabbitmq_queue_messages{queue="lendhub.dlq"}'
+        values: '0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+      - series: 'rabbitmq_queue_messages{queue="lendhub"}'
+        values: '5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: DeadLetterQueueNotEmpty
+        exp_alerts:
+          - exp_labels: { severity: ticket, queue: lendhub.dlq }
+            exp_annotations:
+              summary: "Messages in lendhub.dlq"
+              runbook: docs/runbooks/dead-letter-queue.md
+
+  # The last successful backup was 30 hours ago (RPO 24 h, alert at 26 h).
+  - interval: 1m
+    input_series:
+      - series: 'kube_cronjob_status_last_successful_time{namespace="data", cronjob="postgres-backup"}'
+        values: '-108000x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: BackupMissing
+        exp_alerts:
+          - exp_labels: { severity: ticket, namespace: data, cronjob: postgres-backup }
+            exp_annotations:
+              summary: "No successful database backup in 26 h"
+              runbook: docs/runbooks/backup-restore.md
+
+  # USSD answers from cache or "we will SMS you" more than 0.1 times a second for 10 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'ussd_backend_fallbacks_total{reason="cache"}'
+        values: '0+12x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: UssdBackendFallbacks
+        exp_alerts:
+          - exp_labels: { severity: ticket }
+            exp_annotations:
+              summary: "USSD is answering from cache or 'we will SMS you': a core API is slow or down"

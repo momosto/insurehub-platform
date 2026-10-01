@@ -1,0 +1,43 @@
+# Containers run as non-root without privilege escalation (docs/04-security-and-compliance.md, A.8.9).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-non-root
+  annotations:
+    policies.kyverno.io/title: Require non-root containers
+    policies.kyverno.io/severity: high
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: run-as-non-root
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [insurehub, integrations, claimguard, lendhub, insureassist, insurehub-ussd]
+      validate:
+        message: "Set runAsNonRoot: true on the pod or every container."
+        anyPattern:
+          - spec:
+              securityContext: { runAsNonRoot: true }
+              containers:
+                - =(securityContext):
+                    =(runAsNonRoot): true
+          - spec:
+              containers:
+                - securityContext: { runAsNonRoot: true }
+    - name: no-privilege-escalation
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [insurehub, integrations, claimguard, lendhub, insureassist, insurehub-ussd]
+      validate:
+        message: "Privileged containers and privilege escalation are not allowed."
+        pattern:
+          spec:
+            containers:
+              - =(securityContext):
+                  =(privileged): false
+                  =(allowPrivilegeEscalation): false

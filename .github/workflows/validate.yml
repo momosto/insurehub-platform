@@ -1,0 +1,39 @@
+# Every push and PR: the same offline checks as `scripts/validate.sh`, plus a full-history secret scan (PF-07).
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: 1.9.8, terraform_wrapper: false }
+
+      - name: Install kustomize, kubeconform, kyverno, promtool
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin" && cd "$(mktemp -d)"
+          curl -sSL https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.5.0/kustomize_v5.5.0_linux_amd64.tar.gz | tar xz
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          curl -sSL https://github.com/kyverno/kyverno/releases/download/v1.13.2/kyverno-cli_v1.13.2_linux_x86_64.tar.gz | tar xz
+          curl -sSL https://github.com/prometheus/prometheus/releases/download/v2.55.1/prometheus-2.55.1.linux-amd64.tar.gz | tar xz
+          mv kustomize kubeconform kyverno prometheus-2.55.1.linux-amd64/promtool "$HOME/bin/"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Validate
+        run: scripts/validate.sh
+
+      - name: gitleaks (full history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

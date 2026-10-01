@@ -1,0 +1,25 @@
+# Run with: kyverno test policies/kyverno/tests
+# Signature verification needs network access to Sigstore, so it is covered by the admission drill
+# (docs/evidence) rather than this offline test.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: insurehub-guardrails
+policies:
+  - ../require-limits.yaml
+  - ../disallow-latest-tag.yaml
+  - ../require-non-root.yaml
+resources:
+  - resources/good-pod.yaml
+  - resources/bad-pods.yaml
+results:
+  - { policy: require-requests-limits, rule: containers-have-resources, resources: [good-pod], kind: Pod, result: pass }
+  - { policy: require-requests-limits, rule: containers-have-resources, resources: [no-limits], kind: Pod, result: fail }
+  - { policy: disallow-latest-tag, rule: require-image-tag, resources: [good-pod], kind: Pod, result: pass }
+  - { policy: disallow-latest-tag, rule: require-image-tag, resources: [untagged], kind: Pod, result: fail }
+  - { policy: disallow-latest-tag, rule: no-latest, resources: [good-pod], kind: Pod, result: pass }
+  - { policy: disallow-latest-tag, rule: no-latest, resources: [latest-tag], kind: Pod, result: fail }
+  - { policy: require-non-root, rule: run-as-non-root, resources: [good-pod], kind: Pod, result: pass }
+  - { policy: require-non-root, rule: run-as-non-root, resources: [root-pod], kind: Pod, result: fail }
+  - { policy: require-non-root, rule: no-privilege-escalation, resources: [good-pod], kind: Pod, result: pass }
+  - { policy: require-non-root, rule: no-privilege-escalation, resources: [privileged], kind: Pod, result: fail }

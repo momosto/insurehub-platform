@@ -1,0 +1,58 @@
+# One PostgreSQL 16 instance, one database + role per system (ADR-0004: no shared schemas).
+# Passwords come from the SOPS-encrypted Secret "postgres-credentials" (see secrets/).
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: postgres-init, namespace: data }
+data:
+  10-databases.sh: |
+    #!/bin/sh
+    # Runs once on an empty volume. Each system gets its own database and owner role.
+    set -eu
+    for app in insurehub payments notifications claimguard lendhub insureassist; do
+      var=$(echo "${app}_PASSWORD" | tr '[:lower:]' '[:upper:]')
+      pass=$(printenv "$var")
+      psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<SQL
+    CREATE ROLE ${app} LOGIN PASSWORD '${pass}';
+    CREATE DATABASE ${app} OWNER ${app};
+    REVOKE ALL ON DATABASE ${app} FROM PUBLIC;
+    SQL
+    done
+---
+apiVersion: v1
+kind: Service
+metadata: { name: postgres, namespace: data, labels: { app.kubernetes.io/name: postgres } }
+spec:
+  selector: { app.kubernetes.io/name: postgres }
+  ports: [{ name: postgres, port: 5432 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: postgres, namespace: data, labels: { app.kubernetes.io/name: postgres, app.kubernetes.io/part-of: insurehub } }
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: postgres } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: postgres, app.kubernetes.io/part-of: insurehub } }
+    spec:
+      securityContext: { fsGroup: 70, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: postgres
+          image: postgres:16.6-alpine
+          envFrom: [{ secretRef: { name: postgres-credentials } }]
+          env:
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          args: ["-c", "shared_buffers=256MB", "-c", "max_connections=120", "-c", "log_min_duration_statement=500"]
+          ports: [{ name: postgres, containerPort: 5432 }]
+          resources: { requests: { cpu: 100m, memory: 768Mi }, limits: { memory: 1Gi } }
+          securityContext: { runAsUser: 70, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          readinessProbe: { exec: { command: ["pg_isready", "-U", "postgres"] }, periodSeconds: 10 }
+          livenessProbe: { exec: { command: ["pg_isready", "-U", "postgres"] }, periodSeconds: 30, initialDelaySeconds: 30 }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: init, mountPath: /docker-entrypoint-initdb.d }
+      volumes:
+        - { name: init, configMap: { name: postgres-init, defaultMode: 0555 } }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 20Gi } } }
