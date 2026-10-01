@@ -41,8 +41,9 @@ env:
   TF_VAR_domain: ${{ vars.DEMO_DOMAIN }}
 
 jobs:
+  # Nothing runs until the cloud credentials exist: set the repository variable TF_ENABLED=true after adding them.
   plan:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && vars.TF_ENABLED == 'true'
     runs-on: ubuntu-24.04
     strategy:
       matrix: { stack: [oci, cloudflare] }
@@ -63,7 +64,7 @@ jobs:
             await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
 
   apply:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && vars.TF_ENABLED == 'true'
     runs-on: ubuntu-24.04
     environment: demo            # required reviewer: nothing reaches the cloud without a human approving it
     steps:

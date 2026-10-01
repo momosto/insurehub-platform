@@ -78,7 +78,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ inputs.image }}
 
       - name: Trivy scan (gate)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.REF }}@${{ steps.push.outputs.digest }}
           severity: ${{ inputs.trivy-severity }}
